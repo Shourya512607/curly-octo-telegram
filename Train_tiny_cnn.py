@@ -1,10 +1,12 @@
-# electricity_saver_hog.py
+from flask import Flask, Response, jsonify
 import cv2
 import RPi.GPIO as GPIO
-import time
+
+# Flask
+app = Flask(__name__)
 
 # Relay setup
-RELAY_PIN = 17  # GPIO17, change if needed
+RELAY_PIN = 17
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(RELAY_PIN, GPIO.OUT)
 GPIO.output(RELAY_PIN, GPIO.LOW)
@@ -13,37 +15,48 @@ GPIO.output(RELAY_PIN, GPIO.LOW)
 hog = cv2.HOGDescriptor()
 hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
 
-cap = cv2.VideoCapture(0)  # Pi camera / USB cam
+# Camera
+cap = cv2.VideoCapture(0)
+person_detected = False
 
-try:
+def generate_frames():
+    global person_detected
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-
-        # Resize for speed
         frame_resized = cv2.resize(frame, (320, 240))
-        boxes, weights = hog.detectMultiScale(frame_resized, winStride=(8,8))
-
+        boxes, _ = hog.detectMultiScale(frame_resized, winStride=(8,8))
         if len(boxes) > 0:
-            print("Person detected → Light ON")
+            person_detected = True
             GPIO.output(RELAY_PIN, GPIO.HIGH)
         else:
-            print("No person → Light OFF")
+            person_detected = False
             GPIO.output(RELAY_PIN, GPIO.LOW)
-
-        # Show preview
         for (x, y, w, h) in boxes:
-            cv2.rectangle(frame_resized, (x,y), (x+w, y+h), (0,255,0), 2)
-        cv2.imshow("Electricity Saver (HOG)", frame_resized)
+            cv2.rectangle(frame_resized, (x, y), (x+w, y+h), (0,255,0), 2)
+        ret, buffer = cv2.imencode('.jpg', frame_resized)
+        frame = buffer.tobytes()
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
 
-        if cv2.waitKey(1) & 0xFF == 27:
-            break
+@app.route('/video')
+def video():
+    return Response(generate_frames(),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
 
-except KeyboardInterrupt:
-    pass
+@app.route('/status')
+def status():
+    return jsonify({
+        "person_detected": person_detected,
+        "relay": "ON" if GPIO.input(RELAY_PIN) else "OFF"
+    })
 
-finally:
-    cap.release()
-    cv2.destroyAllWindows()
-    GPIO.cleanup()
+if __name__ == "__main__":
+    try:
+        app.run(host="0.0.0.0", port=5000, threaded=True)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        cap.release()
+        GPIO.cleanup()
