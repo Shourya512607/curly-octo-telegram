@@ -1,14 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-
-void main() => runApp(const MyApp());
-
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-  @override
-  Widget build(BuildContext context) => const MaterialApp(home: HomePage());
-}
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -17,16 +10,17 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final String piIp = "localhost"; // Flask server runs locally
+  final String piIp = "localhost"; // Replace with Raspberry Pi LAN IP for real devices
   String status = "Loading...";
+  Timer? _timer;
 
   Future<void> getStatus() async {
     try {
       final res = await http.get(Uri.parse("http://$piIp:5000/status"));
       final data = jsonDecode(res.body);
-      setState(() => status = data["person_detected"]
-          ? "👤 Person → Light ${data["relay"]}"
-          : "🚫 None → Light ${data["relay"]}");
+      setState(() => status = (data["person_detected"] ?? false)
+          ? "👤 Person → Light ${data["relay"] ?? 'Unknown'}"
+          : "🚫 None → Light ${data["relay"] ?? 'Unknown'}");
     } catch (e) {
       setState(() => status = "Error: $e");
     }
@@ -36,17 +30,31 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     getStatus();
+
+    // Auto-refresh image every 500ms
+    _timer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      setState(() {}); // Triggers rebuild and reloads image
+      getStatus(); // Optional: refresh status automatically
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    String imageUrl = "http://$piIp:5000/video?${DateTime.now().millisecondsSinceEpoch}";
+
     return Scaffold(
       appBar: AppBar(title: const Text("Electricity Saver")),
       body: Column(
         children: [
           Expanded(
             child: Image.network(
-              "http://$piIp:5000/video",
+              imageUrl,
               fit: BoxFit.cover,
               errorBuilder: (_, __, ___) =>
                   const Center(child: Text("❌ Video not available")),
